@@ -1,16 +1,15 @@
-const BASE_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
-const API = `${BASE_URL}/api/v1`
+const API_BASE = '/api/v1'
 
 // ── Token storage ─────────────────────────────────────────────
 
 export const tokenStorage = {
-  getAccess: () => localStorage.getItem('access_token'),
-  getRefresh: () => localStorage.getItem('refresh_token'),
-  set: (access: string, refresh: string) => {
+  getAccess: (): string | null => localStorage.getItem('access_token'),
+  getRefresh: (): string | null => localStorage.getItem('refresh_token'),
+  set: (access: string, refresh: string): void => {
     localStorage.setItem('access_token', access)
     localStorage.setItem('refresh_token', refresh)
   },
-  clear: () => {
+  clear: (): void => {
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
   },
@@ -68,45 +67,46 @@ export interface Analytics {
   daily_volume: { date: string; queries: number }[]
 }
 
-// ── Core fetch wrapper ────────────────────────────────────────
+// ── Core fetch ────────────────────────────────────────────────
 
 async function apiFetch<T>(
   path: string,
   options: RequestInit = {},
-  retry = true
+  retried = false
 ): Promise<T> {
   const token = tokenStorage.getAccess()
+  const isFormData = options.body instanceof FormData
+
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options.headers as Record<string, string>),
+    ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(options.headers as Record<string, string> | undefined),
   }
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  if (options.body instanceof FormData) delete headers['Content-Type']
 
-  const res = await fetch(`${API}${path}`, { ...options, headers })
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers })
 
-  if (res.status === 401 && retry) {
-    const refreshed = await attemptTokenRefresh()
-    if (refreshed) return apiFetch<T>(path, options, false)
+  if (res.status === 401 && !retried) {
+    const ok = await tryRefresh()
+    if (ok) return apiFetch<T>(path, options, true)
     tokenStorage.clear()
     window.location.href = '/login'
     throw new Error('Session expired')
   }
 
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: 'Request failed' }))
-    throw new Error(err.detail ?? 'Request failed')
+    const body = await res.json().catch(() => ({ detail: 'Request failed' }))
+    throw new Error(body.detail ?? 'Request failed')
   }
 
   if (res.status === 204) return undefined as T
-  return res.json()
+  return res.json() as Promise<T>
 }
 
-async function attemptTokenRefresh(): Promise<boolean> {
+async function tryRefresh(): Promise<boolean> {
   const refresh = tokenStorage.getRefresh()
   if (!refresh) return false
   try {
-    const res = await fetch(`${API}/auth/refresh`, {
+    const res = await fetch(`${API_BASE}/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refresh_token: refresh }),
@@ -120,7 +120,7 @@ async function attemptTokenRefresh(): Promise<boolean> {
   }
 }
 
-// ── Auth ──────────────────────────────────────────────────────
+// ── Auth API ──────────────────────────────────────────────────
 
 export const authApi = {
   register: (email: string, full_name: string, password: string) =>
@@ -138,8 +138,9 @@ export const authApi = {
   logout: () => {
     const refresh = tokenStorage.getRefresh()
     if (refresh) {
-      apiFetch('/auth/logout', {
+      fetch(`${API_BASE}/auth/logout`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refresh_token: refresh }),
       }).catch(() => {})
     }
@@ -149,7 +150,7 @@ export const authApi = {
   me: () => apiFetch<User>('/auth/me'),
 }
 
-// ── Chat ──────────────────────────────────────────────────────
+// ── Chat API ──────────────────────────────────────────────────
 
 export const chatApi = {
   createSession: () =>
@@ -161,28 +162,26 @@ export const chatApi = {
   getMessages: (sessionId: string) =>
     apiFetch<Message[]>(`/chat/sessions/${sessionId}/messages`),
 
-  streamChat: (message: string, sessionId?: string): EventSource => {
-    // Use fetch for streaming to include auth header
-    return { message, sessionId } as unknown as EventSource
-  },
-
-  streamChatFetch: async function* (
+  async *streamChat(
     message: string,
     sessionId?: string
-  ): AsyncGenerator<string> {
+  ): AsyncGenerator<string, void, unknown> {
     const token = tokenStorage.getAccess()
-    const res = await fetch(`${API}/chat/stream`, {
+    const res = await fetch(`${API_BASE}/chat/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      body: JSON.stringify({ message, session_id: sessionId ?? null }),
+      body: JSON.stringify({
+        message,
+        session_id: sessionId ?? null,
+      }),
     })
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: 'Stream failed' }))
-      throw new Error(err.detail)
+      const body = await res.json().catch(() => ({ detail: 'Stream failed' }))
+      throw new Error(body.detail ?? 'Stream failed')
     }
 
     const reader = res.body!.getReader()
@@ -204,7 +203,7 @@ export const chatApi = {
   },
 }
 
-// ── Admin ─────────────────────────────────────────────────────
+// ── Admin API ─────────────────────────────────────────────────
 
 export const adminApi = {
   uploadDocument: (file: File) => {
@@ -216,10 +215,12 @@ export const adminApi = {
     })
   },
 
-  listDocuments: () => apiFetch<Document[]>('/admin/documents'),
+  listDocuments: () =>
+    apiFetch<Document[]>('/admin/documents'),
 
   deleteDocument: (id: string) =>
     apiFetch<void>(`/admin/documents/${id}`, { method: 'DELETE' }),
 
-  getAnalytics: () => apiFetch<Analytics>('/admin/analytics'),
+  getAnalytics: () =>
+    apiFetch<Analytics>('/admin/analytics'),
 }

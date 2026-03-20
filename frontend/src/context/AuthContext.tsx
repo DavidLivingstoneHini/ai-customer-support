@@ -23,8 +23,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const token = tokenStorage.getAccess()
-    if (!token) {
+    if (!tokenStorage.getAccess()) {
       setLoading(false)
       return
     }
@@ -59,14 +58,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthContext.Provider
-      value={{
-        user,
-        loading,
-        login,
-        register,
-        logout,
-        isAdmin: user?.role === 'admin',
-      }}
+      value={{ user, loading, login, register, logout, isAdmin: user?.role === 'admin' }}
     >
       {children}
     </AuthContext.Provider>

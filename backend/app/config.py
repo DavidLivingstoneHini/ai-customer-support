@@ -35,7 +35,6 @@ class Settings(BaseSettings):
     # Pinecone
     pinecone_api_key: str
     pinecone_index_name: str = "ai-support-index"
-    pinecone_environment: str = "us-east-1-aws"
 
     # RAG
     chunk_size: int = 512

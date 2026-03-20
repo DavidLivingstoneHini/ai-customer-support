@@ -4,33 +4,30 @@ import LoginPage from './pages/LoginPage'
 import RegisterPage from './pages/RegisterPage'
 import ChatPage from './pages/ChatPage'
 import AdminLayout from './pages/admin/AdminLayout'
-import AdminDocuments from './pages/admin/AdminDocuments'
 import AdminAnalytics from './pages/admin/AdminAnalytics'
+import AdminDocuments from './pages/admin/AdminDocuments'
+
+function Spinner() {
+  return (
+    <div className="flex items-center justify-center min-h-screen bg-gray-50">
+      <div className="w-8 h-8 border-2 border-brand-600 border-t-transparent rounded-full animate-spin" />
+    </div>
+  )
+}
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth()
-  if (loading) return <FullScreenLoader />
+  if (loading) return <Spinner />
   if (!user) return <Navigate to="/login" replace />
   return <>{children}</>
 }
 
 function AdminRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, isAdmin } = useAuth()
-  if (loading) return <FullScreenLoader />
+  if (loading) return <Spinner />
   if (!user) return <Navigate to="/login" replace />
   if (!isAdmin) return <Navigate to="/chat" replace />
   return <>{children}</>
-}
-
-function FullScreenLoader() {
-  return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-50">
-      <div className="flex flex-col items-center gap-3">
-        <div className="w-8 h-8 border-2 border-brand-600 border-t-transparent rounded-full animate-spin" />
-        <p className="text-sm text-gray-500">Loading...</p>
-      </div>
-    </div>
-  )
 }
 
 export default function App() {

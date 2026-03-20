@@ -3,8 +3,8 @@ from datetime import datetime
 from enum import Enum as PyEnum
 
 from sqlalchemy import (
-    Boolean, DateTime, Float, ForeignKey, Integer,
-    String, Text, Enum, func
+    Boolean, DateTime, Float, ForeignKey,
+    Integer, String, Text, Enum, func
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -29,10 +29,14 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    email: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=False, index=True
+    )
     full_name: Mapped[str] = mapped_column(String(255), nullable=False)
     hashed_password: Mapped[str] = mapped_column(String(255), nullable=False)
-    role: Mapped[UserRole] = mapped_column(Enum(UserRole), default=UserRole.USER, nullable=False)
+    role: Mapped[UserRole] = mapped_column(
+        Enum(UserRole), default=UserRole.USER, nullable=False
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -56,7 +60,9 @@ class RefreshToken(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    token_hash: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=False, index=True
+    )
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     is_revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -101,7 +107,9 @@ class ConversationSession(Base):
 
     user: Mapped["User"] = relationship(back_populates="sessions")
     messages: Mapped[list["Message"]] = relationship(
-        back_populates="session", cascade="all, delete-orphan", order_by="Message.created_at"
+        back_populates="session",
+        cascade="all, delete-orphan",
+        order_by="Message.created_at",
     )
 
 
@@ -112,14 +120,18 @@ class Message(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     session_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("conversation_sessions.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey("conversation_sessions.id", ondelete="CASCADE"),
+        nullable=False,
     )
-    role: Mapped[str] = mapped_column(String(20), nullable=False)  # user | assistant
+    role: Mapped[str] = mapped_column(String(20), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     session: Mapped["ConversationSession"] = relationship(back_populates="messages")
-    query_log: Mapped["QueryLog"] = relationship(back_populates="message", uselist=False)
+    query_log: Mapped["QueryLog"] = relationship(
+        back_populates="message", uselist=False
+    )
 
 
 class QueryLog(Base):
@@ -129,7 +141,9 @@ class QueryLog(Base):
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     message_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="CASCADE"), nullable=True
+        UUID(as_uuid=True),
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=True,
     )
     user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
@@ -140,7 +154,7 @@ class QueryLog(Base):
     )
     top_similarity_score: Mapped[float] = mapped_column(Float, nullable=True)
     response_time_ms: Mapped[int] = mapped_column(Integer, nullable=True)
-    source_documents: Mapped[str] = mapped_column(Text, nullable=True)  # JSON array
+    source_documents: Mapped[str] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     message: Mapped["Message"] = relationship(back_populates="query_log")

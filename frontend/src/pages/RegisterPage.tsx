@@ -8,7 +8,7 @@ export default function RegisterPage() {
   const { register } = useAuth()
   const navigate = useNavigate()
   const [form, setForm] = useState({ email: '', full_name: '', password: '' })
-  const [showPassword, setShowPassword] = useState(false)
+  const [showPw, setShowPw] = useState(false)
   const [loading, setLoading] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -75,7 +75,7 @@ export default function RegisterPage() {
               </label>
               <div className="relative">
                 <input
-                  type={showPassword ? 'text' : 'password'}
+                  type={showPw ? 'text' : 'password'}
                   required
                   minLength={8}
                   className="input pr-10"
@@ -85,16 +85,16 @@ export default function RegisterPage() {
                 />
                 <button
                   type="button"
-                  onClick={() => setShowPassword(v => !v)}
+                  onClick={() => setShowPw(v => !v)}
                   className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
                 >
-                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  {showPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
             </div>
 
             <button type="submit" disabled={loading} className="btn-primary w-full mt-2">
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
               {loading ? 'Creating account...' : 'Create account'}
             </button>
           </form>

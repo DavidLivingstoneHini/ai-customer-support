@@ -9,8 +9,8 @@ from app.config import settings
 def get_pinecone_index():
     pc = Pinecone(api_key=settings.pinecone_api_key)
 
-    existing = [i.name for i in pc.list_indexes()]
-    if settings.pinecone_index_name not in existing:
+    existing_names = [idx.name for idx in pc.list_indexes()]
+    if settings.pinecone_index_name not in existing_names:
         pc.create_index(
             name=settings.pinecone_index_name,
             dimension=settings.openai_embedding_dimensions,

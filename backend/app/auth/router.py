@@ -22,8 +22,6 @@ from app.database.session import get_db
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-# ── Schemas ───────────────────────────────────────────────────
-
 class RegisterRequest(BaseModel):
     email: EmailStr
     full_name: str
@@ -66,16 +64,14 @@ class UserResponse(BaseModel):
     role: UserRole
 
 
-# ── Endpoints ─────────────────────────────────────────────────
-
-@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
-async def register(payload: RegisterRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+@router.post("/register", response_model=TokenResponse, status_code=201)
+async def register(
+    payload: RegisterRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
     existing = await db.execute(select(User).where(User.email == payload.email))
     if existing.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Email already registered",
-        )
+        raise HTTPException(status_code=409, detail="Email already registered")
 
     user = User(
         email=payload.email,
@@ -89,48 +85,53 @@ async def register(payload: RegisterRequest, db: Annotated[AsyncSession, Depends
     access_token = create_access_token(str(user.id), user.role.value)
     refresh_token_str, expires_at = create_refresh_token(str(user.id))
 
-    db.add(RefreshToken(
-        user_id=user.id,
-        token_hash=hash_token(refresh_token_str),
-        expires_at=expires_at,
-    ))
+    db.add(
+        RefreshToken(
+            user_id=user.id,
+            token_hash=hash_token(refresh_token_str),
+            expires_at=expires_at,
+        )
+    )
     await db.commit()
-
     return TokenResponse(access_token=access_token, refresh_token=refresh_token_str)
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+async def login(
+    payload: LoginRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
 
     if not user or not verify_password(payload.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
-        )
+        raise HTTPException(status_code=401, detail="Invalid email or password")
     if not user.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account disabled")
+        raise HTTPException(status_code=403, detail="Account disabled")
 
     access_token = create_access_token(str(user.id), user.role.value)
     refresh_token_str, expires_at = create_refresh_token(str(user.id))
 
-    db.add(RefreshToken(
-        user_id=user.id,
-        token_hash=hash_token(refresh_token_str),
-        expires_at=expires_at,
-    ))
+    db.add(
+        RefreshToken(
+            user_id=user.id,
+            token_hash=hash_token(refresh_token_str),
+            expires_at=expires_at,
+        )
+    )
     await db.commit()
-
     return TokenResponse(access_token=access_token, refresh_token=refresh_token_str)
 
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(payload: RefreshRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+async def refresh(
+    payload: RefreshRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
     try:
         token_data = decode_refresh_token(payload.refresh_token)
     except ValueError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
+        raise HTTPException(status_code=401, detail="Invalid refresh token")
 
     token_hash = hash_token(payload.refresh_token)
     result = await db.execute(
@@ -139,35 +140,44 @@ async def refresh(payload: RefreshRequest, db: Annotated[AsyncSession, Depends(g
             RefreshToken.is_revoked == False,
         )
     )
-    stored_token = result.scalar_one_or_none()
+    stored = result.scalar_one_or_none()
 
-    if not stored_token or stored_token.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token expired or revoked")
+    if not stored or stored.expires_at.replace(tzinfo=timezone.utc) < datetime.now(
+        timezone.utc
+    ):
+        raise HTTPException(status_code=401, detail="Refresh token expired or revoked")
 
-    stored_token.is_revoked = True
+    stored.is_revoked = True
 
     user_result = await db.execute(
-        select(User).where(User.id == uuid.UUID(token_data["sub"]), User.is_active == True)
+        select(User).where(
+            User.id == uuid.UUID(token_data["sub"]),
+            User.is_active == True,
+        )
     )
     user = user_result.scalar_one_or_none()
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        raise HTTPException(status_code=401, detail="User not found")
 
     new_access = create_access_token(str(user.id), user.role.value)
     new_refresh, new_expires = create_refresh_token(str(user.id))
 
-    db.add(RefreshToken(
-        user_id=user.id,
-        token_hash=hash_token(new_refresh),
-        expires_at=new_expires,
-    ))
+    db.add(
+        RefreshToken(
+            user_id=user.id,
+            token_hash=hash_token(new_refresh),
+            expires_at=new_expires,
+        )
+    )
     await db.commit()
-
     return TokenResponse(access_token=new_access, refresh_token=new_refresh)
 
 
-@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(payload: RefreshRequest, db: Annotated[AsyncSession, Depends(get_db)]):
+@router.post("/logout", status_code=204)
+async def logout(
+    payload: RefreshRequest,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
     token_hash = hash_token(payload.refresh_token)
     result = await db.execute(
         select(RefreshToken).where(RefreshToken.token_hash == token_hash)

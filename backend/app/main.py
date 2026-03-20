@@ -33,18 +33,18 @@ def create_app() -> FastAPI:
     app.include_router(admin_router, prefix="/api/v1")
 
     @app.on_event("startup")
-    async def startup():
+    async def startup() -> None:
         logger.info("Starting up", env=settings.app_env)
         await create_tables()
-        logger.info("Database tables ready")
+        logger.info("Database ready")
 
-    @app.get("/health")
+    @app.get("/health", tags=["health"])
     async def health():
         return {"status": "ok", "version": settings.app_version}
 
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
-        logger.error("Unhandled exception", path=request.url.path, error=str(exc))
+        logger.error("Unhandled exception", path=str(request.url), error=str(exc))
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"detail": "Internal server error"},

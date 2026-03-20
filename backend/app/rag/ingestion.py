@@ -3,7 +3,11 @@ from pathlib import Path
 
 import structlog
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader
+from langchain_community.document_loaders import (
+    PyPDFLoader,
+    Docx2txtLoader,
+    TextLoader,
+)
 from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
@@ -13,7 +17,6 @@ from app.rag.pinecone_client import get_pinecone_index
 logger = structlog.get_logger()
 openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
 
-
 SUPPORTED_TYPES = {
     "application/pdf": "pdf",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
@@ -22,13 +25,12 @@ SUPPORTED_TYPES = {
 
 
 def load_document(file_path: str, file_type: str) -> list:
-    path = str(file_path)
     if file_type == "pdf":
-        loader = PyPDFLoader(path)
+        loader = PyPDFLoader(file_path)
     elif file_type == "docx":
-        loader = Docx2txtLoader(path)
+        loader = Docx2txtLoader(file_path)
     else:
-        loader = TextLoader(path, encoding="utf-8")
+        loader = TextLoader(file_path, encoding="utf-8")
     return loader.load()
 
 
@@ -40,7 +42,6 @@ def chunk_documents(docs: list, doc_id: str, original_name: str) -> list[dict]:
         separators=["\n\n", "\n", ". ", " ", ""],
     )
     chunks = splitter.split_documents(docs)
-
     return [
         {
             "id": f"{doc_id}#{i}",
@@ -57,7 +58,7 @@ def chunk_documents(docs: list, doc_id: str, original_name: str) -> list[dict]:
     ]
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10))
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=2, max=10))
 async def embed_texts(texts: list[str]) -> list[list[float]]:
     response = await openai_client.embeddings.create(
         model=settings.openai_embedding_model,
@@ -67,8 +68,10 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
     return [item.embedding for item in response.data]
 
 
-async def ingest_document(file_path: Path, doc_id: str, original_name: str, file_type: str) -> int:
-    logger.info("Starting document ingestion", doc_id=doc_id, filename=original_name)
+async def ingest_document(
+    file_path: Path, doc_id: str, original_name: str, file_type: str
+) -> int:
+    logger.info("Ingestion started", doc_id=doc_id, filename=original_name)
 
     docs = load_document(str(file_path), file_type)
     chunks = chunk_documents(docs, doc_id, original_name)
@@ -80,10 +83,9 @@ async def ingest_document(file_path: Path, doc_id: str, original_name: str, file
     index = get_pinecone_index()
     batch_size = 100
 
-    for i in range(0, len(chunks), batch_size):
-        batch = chunks[i : i + batch_size]
+    for batch_start in range(0, len(chunks), batch_size):
+        batch = chunks[batch_start : batch_start + batch_size]
         texts = [c["text"] for c in batch]
-
         embeddings = await embed_texts(texts)
 
         vectors = [
@@ -94,18 +96,16 @@ async def ingest_document(file_path: Path, doc_id: str, original_name: str, file
             }
             for chunk, embedding in zip(batch, embeddings)
         ]
-
         index.upsert(vectors=vectors)
-        logger.info("Indexed batch", doc_id=doc_id, batch=i // batch_size + 1)
 
-    logger.info("Document ingestion complete", doc_id=doc_id, chunks=len(chunks))
+    logger.info("Ingestion complete", doc_id=doc_id, total_chunks=len(chunks))
     return len(chunks)
 
 
 async def delete_document_vectors(doc_id: str) -> None:
     index = get_pinecone_index()
     index.delete(filter={"document_id": {"$eq": doc_id}})
-    logger.info("Deleted vectors", doc_id=doc_id)
+    logger.info("Vectors deleted", doc_id=doc_id)
 
 
 async def embed_query(query: str) -> list[float]:

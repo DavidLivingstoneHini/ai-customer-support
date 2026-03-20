@@ -49,13 +49,7 @@ services:
       redis:
         condition: service_healthy
     volumes:
-      - ./backend:/app
       - uploaded_docs:/app/uploads
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   frontend:
     build:
@@ -64,9 +58,7 @@ services:
     container_name: acs_frontend
     restart: unless-stopped
     ports:
-      - "3000:3000"
-    environment:
-      - VITE_API_URL=http://localhost:8000
+      - "3000:80"
     depends_on:
       - backend
 

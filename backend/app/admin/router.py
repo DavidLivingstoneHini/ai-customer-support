@@ -16,15 +16,12 @@ from app.database.session import get_db
 from app.rag.ingestion import SUPPORTED_TYPES, delete_document_vectors, ingest_document
 
 logger = structlog.get_logger()
-
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 UPLOAD_DIR = Path("/app/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 
-
-# ── Schemas ───────────────────────────────────────────────────
 
 class DocumentResponse(BaseModel):
     id: uuid.UUID
@@ -34,9 +31,6 @@ class DocumentResponse(BaseModel):
     chunk_count: int
     is_indexed: bool
     created_at: str
-
-    class Config:
-        from_attributes = True
 
 
 class AnalyticsResponse(BaseModel):
@@ -52,8 +46,6 @@ class AnalyticsResponse(BaseModel):
     daily_volume: list[dict]
 
 
-# ── Endpoints ─────────────────────────────────────────────────
-
 @router.post("/documents", response_model=DocumentResponse, status_code=201)
 async def upload_document(
     file: Annotated[UploadFile, File(...)],
@@ -63,21 +55,20 @@ async def upload_document(
     if file.content_type not in SUPPORTED_TYPES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Unsupported file type. Allowed: PDF, DOCX, TXT",
+            detail="Unsupported file type. Allowed: PDF, DOCX, TXT",
         )
 
     contents = await file.read()
     if len(contents) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="File exceeds 50MB limit",
+            detail="File exceeds 50 MB limit",
         )
 
     doc_id = str(uuid.uuid4())
     file_ext = SUPPORTED_TYPES[file.content_type]
     saved_filename = f"{doc_id}.{file_ext}"
     save_path = UPLOAD_DIR / saved_filename
-
     save_path.write_bytes(contents)
 
     doc = Document(
@@ -98,9 +89,12 @@ async def upload_document(
         doc.is_indexed = True
         await db.commit()
         await db.refresh(doc)
-    except Exception as e:
-        logger.error("Ingestion failed", doc_id=doc_id, error=str(e))
-        raise HTTPException(status_code=500, detail=f"Document indexing failed: {str(e)}")
+    except Exception as exc:
+        logger.error("Ingestion failed", doc_id=doc_id, error=str(exc))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Document indexing failed: {exc}",
+        )
 
     return DocumentResponse(
         id=doc.id,
@@ -167,72 +161,78 @@ async def get_analytics(
     week_start = now - timedelta(days=7)
     month_start = now - timedelta(days=30)
 
-    total_result = await db.execute(select(func.count(QueryLog.id)))
-    total = total_result.scalar() or 0
+    total = (await db.execute(select(func.count(QueryLog.id)))).scalar() or 0
 
-    answered_result = await db.execute(
-        select(func.count(QueryLog.id)).where(QueryLog.status == QueryStatus.ANSWERED)
-    )
-    answered = answered_result.scalar() or 0
-
-    escalated_result = await db.execute(
-        select(func.count(QueryLog.id)).where(QueryLog.status == QueryStatus.ESCALATED)
-    )
-    escalated = escalated_result.scalar() or 0
-
-    avg_rt_result = await db.execute(
-        select(func.avg(QueryLog.response_time_ms)).where(
-            QueryLog.response_time_ms.isnot(None)
+    answered = (
+        await db.execute(
+            select(func.count(QueryLog.id)).where(
+                QueryLog.status == QueryStatus.ANSWERED
+            )
         )
-    )
-    avg_rt = avg_rt_result.scalar() or 0
+    ).scalar() or 0
 
-    today_result = await db.execute(
-        select(func.count(QueryLog.id)).where(QueryLog.created_at >= today_start)
-    )
-    queries_today = today_result.scalar() or 0
+    escalated = (
+        await db.execute(
+            select(func.count(QueryLog.id)).where(
+                QueryLog.status == QueryStatus.ESCALATED
+            )
+        )
+    ).scalar() or 0
 
-    week_result = await db.execute(
-        select(func.count(QueryLog.id)).where(QueryLog.created_at >= week_start)
-    )
-    queries_week = week_result.scalar() or 0
+    avg_rt = (
+        await db.execute(
+            select(func.avg(QueryLog.response_time_ms)).where(
+                QueryLog.response_time_ms.isnot(None)
+            )
+        )
+    ).scalar() or 0
 
-    month_result = await db.execute(
-        select(func.count(QueryLog.id)).where(QueryLog.created_at >= month_start)
-    )
-    queries_month = month_result.scalar() or 0
+    queries_today = (
+        await db.execute(
+            select(func.count(QueryLog.id)).where(QueryLog.created_at >= today_start)
+        )
+    ).scalar() or 0
 
-    # Top 10 queries
+    queries_week = (
+        await db.execute(
+            select(func.count(QueryLog.id)).where(QueryLog.created_at >= week_start)
+        )
+    ).scalar() or 0
+
+    queries_month = (
+        await db.execute(
+            select(func.count(QueryLog.id)).where(QueryLog.created_at >= month_start)
+        )
+    ).scalar() or 0
+
     top_result = await db.execute(
         select(QueryLog.query_text, func.count(QueryLog.id).label("count"))
         .group_by(QueryLog.query_text)
         .order_by(func.count(QueryLog.id).desc())
         .limit(10)
     )
-    top_queries = [{"query": row[0], "count": row[1]} for row in top_result.all()]
+    top_queries = [{"query": r[0], "count": r[1]} for r in top_result.all()]
 
-    # Daily volume last 14 days
     daily_volume = []
     for days_ago in range(13, -1, -1):
         day = now - timedelta(days=days_ago)
         day_start = day.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
-        count_result = await db.execute(
-            select(func.count(QueryLog.id)).where(
-                QueryLog.created_at >= day_start,
-                QueryLog.created_at < day_end,
+        count = (
+            await db.execute(
+                select(func.count(QueryLog.id)).where(
+                    QueryLog.created_at >= day_start,
+                    QueryLog.created_at < day_end,
+                )
             )
-        )
-        daily_volume.append({
-            "date": day_start.strftime("%b %d"),
-            "queries": count_result.scalar() or 0,
-        })
+        ).scalar() or 0
+        daily_volume.append({"date": day_start.strftime("%b %d"), "queries": count})
 
     return AnalyticsResponse(
         total_queries=total,
         answered_queries=answered,
         escalated_queries=escalated,
-        resolution_rate=round(answered / total * 100, 1) if total > 0 else 0,
+        resolution_rate=round(answered / total * 100, 1) if total > 0 else 0.0,
         avg_response_time_ms=round(float(avg_rt), 1),
         queries_today=queries_today,
         queries_this_week=queries_week,

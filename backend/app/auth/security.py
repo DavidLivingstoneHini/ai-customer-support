@@ -62,7 +62,9 @@ def decode_access_token(token: str) -> dict:
 
 def decode_refresh_token(token: str) -> dict:
     try:
-        payload = jwt.decode(token, settings.jwt_refresh_secret, algorithms=["HS256"])
+        payload = jwt.decode(
+            token, settings.jwt_refresh_secret, algorithms=["HS256"]
+        )
         if payload.get("type") != "refresh":
             raise JWTError("Invalid token type")
         return payload

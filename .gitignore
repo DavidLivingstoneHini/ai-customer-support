@@ -1,4 +1,4 @@
-# ── Environment & secrets (NEVER commit these) ────────────────
+# ── Secrets (NEVER commit) ────────────────────────────────────
 .env
 .env.local
 .env.*.local
@@ -9,55 +9,38 @@
 # ── Python ────────────────────────────────────────────────────
 __pycache__/
 *.py[cod]
-*$py.class
 *.so
 *.egg
 *.egg-info/
 dist/
 build/
-.eggs/
 venv/
 .venv/
 env/
-.Python
-pip-log.txt
-pip-delete-this-directory.txt
 .pytest_cache/
 .coverage
 htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# ── Node / Frontend ───────────────────────────────────────────
+# ── Node ──────────────────────────────────────────────────────
 node_modules/
 dist/
 dist-ssr/
-*.local
 .cache/
-.parcel-cache/
 
-# ── Uploads (user files, not code) ───────────────────────────
+# ── Uploads ───────────────────────────────────────────────────
 backend/uploads/
-uploads/
-
-# ── Docker ────────────────────────────────────────────────────
-.docker/
 
 # ── OS ────────────────────────────────────────────────────────
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
 Thumbs.db
-ehthumbs.db
 Desktop.ini
 
 # ── Editors ───────────────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
-*.swo
 *~
 
 # ── Logs ──────────────────────────────────────────────────────

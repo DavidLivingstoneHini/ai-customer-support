@@ -25,16 +25,19 @@ async def get_current_user(
     try:
         payload = decode_access_token(credentials.credentials)
         user_id: str = payload.get("sub")
-        if user_id is None:
+        if not user_id:
             raise credentials_exception
     except ValueError:
         raise credentials_exception
 
     result = await db.execute(
-        select(User).where(User.id == uuid.UUID(user_id), User.is_active == True)
+        select(User).where(
+            User.id == uuid.UUID(user_id),
+            User.is_active == True,
+        )
     )
     user = result.scalar_one_or_none()
-    if user is None:
+    if not user:
         raise credentials_exception
     return user
 
