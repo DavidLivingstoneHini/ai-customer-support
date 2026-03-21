@@ -46,3 +46,8 @@ Desktop.ini
 # ── Logs ──────────────────────────────────────────────────────
 *.log
 logs/
+
+# Test artifacts
+backend/test_acs.db
+backend/.env.test
+backend/.pytest_cache/
