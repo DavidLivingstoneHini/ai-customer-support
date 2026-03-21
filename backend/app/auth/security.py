@@ -23,7 +23,7 @@ def hash_token(token: str) -> str:
 
 
 def create_access_token(subject: str, role: str) -> str:
-    expire = datetime.now(timezone.utc) + timedelta(
+    expire = datetime.utcnow() + timedelta(
         minutes=settings.jwt_access_token_expire_minutes
     )
     payload = {
@@ -37,7 +37,7 @@ def create_access_token(subject: str, role: str) -> str:
 
 
 def create_refresh_token(subject: str) -> tuple[str, datetime]:
-    expire = datetime.now(timezone.utc) + timedelta(
+    expire = datetime.utcnow() + timedelta(
         days=settings.jwt_refresh_token_expire_days
     )
     payload = {
