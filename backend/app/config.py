@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     # App
     app_env: str = "development"
     app_name: str = "AI Customer Support Assistant"
-    app_version: str = "1.0.0"
+    app_version: str = "2.0.0"
 
     # Database
     database_url: str
@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     chunk_overlap: int = 50
     top_k_results: int = 5
     min_similarity_score: float = 0.75
+
+    # Agent
+    agent_max_iterations: int = 6
 
     # CORS
     allowed_origins: str = "http://localhost:3000"

@@ -16,7 +16,7 @@ from app.database.models import (
     QueryStatus,
 )
 from app.database.session import get_db
-from app.rag.pipeline import stream_rag_response
+from app.rag.agent import run_agent
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -168,7 +168,6 @@ async def chat_stream(
 
     await db.commit()
 
-    # Capture IDs needed inside the generator
     session_id = session.id
     user_id = current_user.id
 
@@ -180,10 +179,23 @@ async def chat_stream(
         query_status = QueryStatus.ANSWERED
         escalated = False
 
-        async for chunk in stream_rag_response(payload.message, history):
-            if chunk.startswith("data: [SOURCES]"):
+        async for chunk in run_agent(payload.message, history):
+
+            if chunk.startswith("data: [THINKING]"):
+                yield chunk
+
+            elif chunk.startswith("data: [TOOL_CALL]"):
+                yield chunk
+
+            elif chunk.startswith("data: [TOOL_RESULT]"):
+                yield chunk
+
+            elif chunk.startswith("data: [SOURCES]"):
                 raw = chunk.replace("data: [SOURCES]", "").strip()
-                sources = json.loads(raw)
+                try:
+                    sources = json.loads(raw)
+                except json.JSONDecodeError:
+                    sources = []
                 yield chunk
 
             elif chunk.startswith("data: [ESCALATE]"):
@@ -203,13 +215,12 @@ async def chat_stream(
                 yield chunk
 
             else:
-                # Regular text token
                 token = chunk.replace("data: ", "").replace("<br>", "\n")
-                if token:
+                if token.strip():
                     full_response.append(token)
                 yield chunk
 
-        # Persist assistant message and query log after stream ends
+        # Persist assistant message and query log after stream completes
         from app.database.session import AsyncSessionLocal
 
         async with AsyncSessionLocal() as persist_db:
@@ -225,7 +236,7 @@ async def chat_stream(
                         "Please rephrase your question."
                     )
                 else:
-                    assistant_content = "".join(full_response)
+                    assistant_content = "".join(full_response).strip() or "(No response)"
 
                 asst_msg = Message(
                     session_id=session_id,

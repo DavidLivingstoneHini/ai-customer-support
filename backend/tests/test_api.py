@@ -100,7 +100,7 @@ class TestChatStream:
         assert resp.status_code == 403
 
     def test_stream_empty_message_rejected(self, client: TestClient, auth_headers: dict):
-        with patch("app.chat.router.stream_rag_response") as mock_stream:
+        with patch("app.chat.router.run_agent") as mock_stream:
             mock_stream.return_value = AsyncMock()
             resp = client.post(
                 "/api/v1/chat/stream",
@@ -117,7 +117,7 @@ class TestChatStream:
             yield "data: Hello there!\n\n"
             yield "data: [DONE]150|0.85\n\n"
 
-        with patch("app.chat.router.stream_rag_response", side_effect=fake_stream):
+        with patch("app.chat.router.run_agent", side_effect=fake_stream):
             resp = client.post(
                 "/api/v1/chat/stream",
                 json={"message": "What is your return policy?"},
@@ -135,7 +135,7 @@ class TestChatStream:
             yield "data: Response text\n\n"
             yield "data: [DONE]100|0.9\n\n"
 
-        with patch("app.chat.router.stream_rag_response", side_effect=fake_stream):
+        with patch("app.chat.router.run_agent", side_effect=fake_stream):
             resp = client.post(
                 "/api/v1/chat/stream",
                 json={"message": "hello", "session_id": session_id},

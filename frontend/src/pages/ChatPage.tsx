@@ -12,12 +12,18 @@ import {
   LogOut,
   MessageSquare,
   Plus,
+  Search,
   Send,
   Settings,
+  Ticket,
+  Tool,
   User,
+  Zap,
 } from 'lucide-react'
 import { chatApi, type Message, type Session } from '../api/client'
 import { useAuth } from '../context/AuthContext'
+
+// ── Types ─────────────────────────────────────────────────────
 
 interface Source {
   document_name: string
@@ -26,12 +32,98 @@ interface Source {
   score: number
 }
 
+interface AgentStep {
+  type: 'thinking' | 'tool_call' | 'tool_result'
+  content: string
+  toolName?: string
+}
+
 interface UIMessage extends Omit<Message, 'id'> {
   id: string
   sources?: Source[]
   escalated?: boolean
   streaming?: boolean
+  agentSteps?: AgentStep[]
 }
+
+// ── Tool icon helper ──────────────────────────────────────────
+
+function ToolIcon({ name }: { name: string }) {
+  if (name === 'search_knowledge_base' || name === 'get_faq_answer')
+    return <Search className="w-3 h-3" />
+  if (name === 'create_support_ticket')
+    return <Ticket className="w-3 h-3" />
+  return <Tool className="w-3 h-3" />
+}
+
+// ── Agent steps panel ─────────────────────────────────────────
+
+function AgentStepsPanel({ steps }: { steps: AgentStep[] }) {
+  const [open, setOpen] = useState(false)
+  if (!steps.length) return null
+
+  const toolCalls = steps.filter(s => s.type === 'tool_call')
+
+  return (
+    <div className="mt-2 w-full">
+      <button
+        onClick={() => setOpen(v => !v)}
+        className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+      >
+        <Zap className="w-3 h-3 text-purple-400" />
+        <span className="text-purple-500 font-medium">Agent reasoning</span>
+        {toolCalls.length > 0 && (
+          <span className="text-gray-400">
+            · {toolCalls.length} tool{toolCalls.length !== 1 ? 's' : ''} used
+          </span>
+        )}
+        {open ? (
+          <ChevronDown className="w-3 h-3 ml-1" />
+        ) : (
+          <ChevronRight className="w-3 h-3 ml-1" />
+        )}
+      </button>
+
+      {open && (
+        <div className="mt-2 space-y-1.5 border-l-2 border-purple-100 pl-3">
+          {steps.map((step, i) => (
+            <div key={i}>
+              {step.type === 'thinking' && (
+                <div className="text-xs text-gray-500 italic leading-relaxed">
+                  💭 {step.content}
+                </div>
+              )}
+              {step.type === 'tool_call' && (
+                <div className="flex items-start gap-1.5 text-xs text-purple-700 bg-purple-50 rounded-lg px-2.5 py-1.5">
+                  <ToolIcon name={step.toolName ?? ''} />
+                  <span>
+                    <span className="font-medium">Calling</span>{' '}
+                    <code className="bg-purple-100 px-1 rounded text-purple-800 text-[11px]">
+                      {step.toolName}
+                    </code>
+                    {step.content && (
+                      <span className="text-purple-500 ml-1 truncate block max-w-xs">
+                        {step.content}
+                      </span>
+                    )}
+                  </span>
+                </div>
+              )}
+              {step.type === 'tool_result' && (
+                <div className="text-xs text-gray-500 bg-gray-50 rounded-lg px-2.5 py-1.5 leading-relaxed">
+                  <span className="font-medium text-gray-600">Result: </span>
+                  {step.content}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Main component ────────────────────────────────────────────
 
 export default function ChatPage() {
   const { user, logout, isAdmin } = useAuth()
@@ -48,12 +140,10 @@ export default function ChatPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const streamingMsgId = useRef<string | null>(null)
 
-  // Auto-scroll on new content
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Load sessions
   useEffect(() => {
     chatApi
       .listSessions()
@@ -94,7 +184,6 @@ export default function ChatPage() {
     setInput('')
     setStreaming(true)
 
-    // Reset textarea height
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
     }
@@ -117,6 +206,7 @@ export default function ChatPage() {
         content: '',
         created_at: new Date().toISOString(),
         streaming: true,
+        agentSteps: [],
       },
     ])
 
@@ -126,13 +216,83 @@ export default function ChatPage() {
       let escalated = false
 
       for await (const chunk of chatApi.streamChat(text, activeSessionId)) {
-        if (chunk.startsWith('[SOURCES]')) {
+
+        // ── Agent reasoning step ──────────────────────────────
+        if (chunk.startsWith('[THINKING]')) {
+          const thinking = chunk.slice(10)
+          setMessages(prev =>
+            prev.map(m =>
+              m.id === assistantMsgId
+                ? {
+                    ...m,
+                    agentSteps: [
+                      ...(m.agentSteps ?? []),
+                      { type: 'thinking', content: thinking },
+                    ],
+                  }
+                : m
+            )
+          )
+
+        // ── Tool call ─────────────────────────────────────────
+        } else if (chunk.startsWith('[TOOL_CALL]')) {
+          try {
+            const data = JSON.parse(chunk.slice(11))
+            const argsPreview = Object.entries(data.args ?? {})
+              .map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`)
+              .join(', ')
+            setMessages(prev =>
+              prev.map(m =>
+                m.id === assistantMsgId
+                  ? {
+                      ...m,
+                      agentSteps: [
+                        ...(m.agentSteps ?? []),
+                        {
+                          type: 'tool_call',
+                          toolName: data.name,
+                          content: argsPreview,
+                        },
+                      ],
+                    }
+                  : m
+              )
+            )
+          } catch {}
+
+        // ── Tool result ───────────────────────────────────────
+        } else if (chunk.startsWith('[TOOL_RESULT]')) {
+          try {
+            const data = JSON.parse(chunk.slice(13))
+            setMessages(prev =>
+              prev.map(m =>
+                m.id === assistantMsgId
+                  ? {
+                      ...m,
+                      agentSteps: [
+                        ...(m.agentSteps ?? []),
+                        {
+                          type: 'tool_result',
+                          toolName: data.name,
+                          content: data.result,
+                        },
+                      ],
+                    }
+                  : m
+              )
+            )
+          } catch {}
+
+        // ── Sources ───────────────────────────────────────────
+        } else if (chunk.startsWith('[SOURCES]')) {
           sources = JSON.parse(chunk.slice(9))
           setMessages(prev =>
             prev.map(m =>
               m.id === assistantMsgId ? { ...m, sources } : m
             )
           )
+
+        // ── Escalate ──────────────────────────────────────────
         } else if (chunk === '[ESCALATE]') {
           escalated = true
           const escalateText =
@@ -144,23 +304,28 @@ export default function ChatPage() {
                 : m
             )
           )
+
+        // ── Injection detected ────────────────────────────────
         } else if (chunk === '[INJECTION_DETECTED]') {
-          const warnText =
-            'Potentially unsafe content detected in your message. Please rephrase.'
           setMessages(prev =>
             prev.map(m =>
               m.id === assistantMsgId
-                ? { ...m, content: warnText, streaming: false }
+                ? {
+                    ...m,
+                    content:
+                      'Potentially unsafe content detected in your message. Please rephrase.',
+                    streaming: false,
+                  }
                 : m
             )
           )
+
+        // ── Done ──────────────────────────────────────────────
         } else if (chunk.startsWith('[DONE]')) {
-          // Stream finished — refresh session list to update titles/counts
           chatApi
             .listSessions()
             .then(updated => {
               setSessions(updated)
-              // If this was a new session, pick up the new session id
               if (!activeSessionId && updated.length > 0) {
                 setActiveSessionId(updated[0].id)
               }
@@ -172,15 +337,14 @@ export default function ChatPage() {
               m.id === assistantMsgId ? { ...m, streaming: false } : m
             )
           )
+
+        // ── Regular text token ────────────────────────────────
         } else if (!escalated) {
-          // Regular text token — backend sends <br> instead of \n for SSE safety
           const token = chunk.replace(/<br>/g, '\n')
           accumulated += token
           setMessages(prev =>
             prev.map(m =>
-              m.id === assistantMsgId
-                ? { ...m, content: accumulated }
-                : m
+              m.id === assistantMsgId ? { ...m, content: accumulated } : m
             )
           )
         }
@@ -203,7 +367,6 @@ export default function ChatPage() {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInput(e.target.value)
-    // Auto-resize textarea
     e.target.style.height = 'auto'
     e.target.style.height = Math.min(e.target.scrollHeight, 160) + 'px'
   }
@@ -222,9 +385,14 @@ export default function ChatPage() {
           <div className="w-7 h-7 bg-brand-600 rounded-lg flex items-center justify-center flex-shrink-0">
             <Bot className="w-4 h-4 text-white" />
           </div>
-          <span className="text-white font-semibold text-sm truncate">
-            AI Support
-          </span>
+          <div className="min-w-0">
+            <span className="text-white font-semibold text-sm truncate block">
+              AI Support
+            </span>
+            <span className="text-purple-400 text-[10px] font-medium">
+              Agentic · Tool-use enabled
+            </span>
+          </div>
         </div>
 
         {/* New chat */}
@@ -243,54 +411,45 @@ export default function ChatPage() {
         {/* Session list */}
         <div className="flex-1 overflow-y-auto px-3 space-y-0.5 pb-2">
           {sessions.length === 0 && (
-            <p className="text-xs text-gray-600 px-3 py-4 text-center">
-              No conversations yet
-            </p>
+            <p className="text-gray-600 text-xs px-2 pt-2">No conversations yet</p>
           )}
           {sessions.map(s => (
             <button
               key={s.id}
               onClick={() => loadSession(s)}
-              disabled={streaming}
               className={clsx(
-                'w-full text-left px-3 py-2.5 rounded-lg text-sm transition-colors disabled:opacity-50',
-                activeSessionId === s.id
+                'w-full text-left px-3 py-2 rounded-lg text-sm transition-colors',
+                s.id === activeSessionId
                   ? 'bg-gray-700 text-white'
                   : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'
               )}
             >
-              <div className="flex items-center gap-2 min-w-0">
-                <MessageSquare className="w-3.5 h-3.5 flex-shrink-0" />
-                <span className="truncate">
-                  {s.title ?? 'New conversation'}
-                </span>
-              </div>
-              <p className="text-xs text-gray-600 mt-0.5 pl-5">
+              <p className="truncate">{s.title ?? 'Conversation'}</p>
+              <p className="text-xs text-gray-600 mt-0.5">
                 {s.message_count} message{s.message_count !== 1 ? 's' : ''}
               </p>
             </button>
           ))}
         </div>
 
-        {/* Bottom: admin link + user */}
-        <div className="border-t border-gray-800 p-3 flex-shrink-0 space-y-1">
-          {isAdmin && (
-            <button
-              onClick={() => navigate('/admin')}
-              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-400
-                         hover:bg-gray-800 hover:text-gray-200 rounded-lg transition-colors"
-            >
-              <Settings className="w-4 h-4" />
-              Admin dashboard
-            </button>
-          )}
-          <div className="flex items-center gap-2 px-3 py-2">
-            <div className="w-6 h-6 bg-brand-600 rounded-full flex items-center justify-center flex-shrink-0">
+        {/* Footer */}
+        <div className="flex-shrink-0 border-t border-gray-800 px-4 py-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-6 h-6 bg-brand-700 rounded-full flex items-center justify-center flex-shrink-0">
               <User className="w-3 h-3 text-white" />
             </div>
-            <span className="text-xs text-gray-400 truncate flex-1 min-w-0">
+            <span className="text-gray-400 text-xs truncate flex-1 min-w-0">
               {user?.full_name}
             </span>
+            {isAdmin && (
+              <button
+                onClick={() => navigate('/admin')}
+                title="Admin"
+                className="text-gray-600 hover:text-gray-300 transition-colors flex-shrink-0"
+              >
+                <Settings className="w-3.5 h-3.5" />
+              </button>
+            )}
             <button
               onClick={handleLogout}
               title="Sign out"
@@ -311,26 +470,16 @@ export default function ChatPage() {
             className="text-gray-500 hover:text-gray-700 transition-colors"
             aria-label="Toggle sidebar"
           >
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M4 6h16M4 12h16M4 18h16"
-              />
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <h1 className="text-sm font-semibold text-gray-900 truncate">
-              {sessions.find(s => s.id === activeSessionId)?.title ??
-                'New conversation'}
+              {sessions.find(s => s.id === activeSessionId)?.title ?? 'New conversation'}
             </h1>
-            <p className="text-xs text-gray-500">AI-powered support assistant</p>
+            <p className="text-xs text-gray-500">Agentic AI support · searches knowledge base automatically</p>
           </div>
         </header>
 
@@ -390,7 +539,7 @@ export default function ChatPage() {
               </button>
             </div>
             <p className="text-center text-xs text-gray-400 mt-2">
-              AI can make mistakes. Verify important information.
+              The agent searches your knowledge base automatically before answering.
             </p>
           </div>
         </div>
@@ -410,10 +559,25 @@ function EmptyState() {
       <h2 className="text-lg font-semibold text-gray-900 mb-1">
         How can I help you?
       </h2>
-      <p className="text-sm text-gray-500 max-w-sm">
-        Ask me anything about our products or services. I'll search the
-        knowledge base and give you an accurate, cited answer.
+      <p className="text-sm text-gray-500 max-w-sm mb-4">
+        Ask me anything. I'll search the knowledge base, check orders, and
+        create support tickets automatically.
       </p>
+      <div className="flex flex-wrap gap-2 justify-center max-w-sm">
+        {[
+          '🔍 Search knowledge base',
+          '📦 Check order status',
+          '🎫 Create support ticket',
+          '❓ FAQ answers',
+        ].map(hint => (
+          <span
+            key={hint}
+            className="px-2.5 py-1 bg-gray-100 text-gray-600 text-xs rounded-full"
+          >
+            {hint}
+          </span>
+        ))}
+      </div>
     </div>
   )
 }
@@ -423,12 +587,7 @@ function MessageBubble({ message }: { message: UIMessage }) {
   const [sourcesOpen, setSourcesOpen] = useState(false)
 
   return (
-    <div
-      className={clsx(
-        'flex gap-3 message-in',
-        isUser && 'flex-row-reverse'
-      )}
-    >
+    <div className={clsx('flex gap-3 message-in', isUser && 'flex-row-reverse')}>
       {/* Avatar */}
       <div
         className={clsx(
@@ -443,12 +602,7 @@ function MessageBubble({ message }: { message: UIMessage }) {
         )}
       </div>
 
-      <div
-        className={clsx(
-          'flex flex-col gap-1.5 max-w-[80%]',
-          isUser && 'items-end'
-        )}
-      >
+      <div className={clsx('flex flex-col gap-1.5 max-w-[80%]', isUser && 'items-end')}>
         {/* Bubble */}
         <div
           className={clsx(
@@ -480,21 +634,24 @@ function MessageBubble({ message }: { message: UIMessage }) {
           )}
         </div>
 
+        {/* Agent steps — shown below assistant bubble */}
+        {!isUser && message.agentSteps && message.agentSteps.length > 0 && (
+          <AgentStepsPanel steps={message.agentSteps} />
+        )}
+
         {/* Sources */}
         {message.sources && message.sources.length > 0 && (
           <div className="w-full">
             <button
               onClick={() => setSourcesOpen(v => !v)}
-              className="flex items-center gap-1 text-xs text-gray-400
-                         hover:text-gray-600 transition-colors"
+              className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 transition-colors"
             >
               {sourcesOpen ? (
                 <ChevronDown className="w-3 h-3" />
               ) : (
                 <ChevronRight className="w-3 h-3" />
               )}
-              {message.sources.length} source
-              {message.sources.length !== 1 ? 's' : ''}
+              {message.sources.length} source{message.sources.length !== 1 ? 's' : ''}
             </button>
 
             {sourcesOpen && (
@@ -507,9 +664,7 @@ function MessageBubble({ message }: { message: UIMessage }) {
                   >
                     <FileText className="w-3 h-3 text-gray-400 flex-shrink-0" />
                     <span className="truncate flex-1">{src.document_name}</span>
-                    <span className="text-gray-400 flex-shrink-0">
-                      p.{src.page}
-                    </span>
+                    <span className="text-gray-400 flex-shrink-0">p.{src.page}</span>
                     <span className="text-gray-400 flex-shrink-0 ml-auto">
                       {Math.round(src.score * 100)}%
                     </span>

@@ -1,24 +1,16 @@
 """
-RAG pipeline unit tests — injection detection, input sanitisation,
-PSI-style chunk validation. All pure Python, zero external calls.
+RAG + Agent pipeline unit tests.
+All pure Python — no external services, no DB, no OpenAI calls.
 """
-import re
 import pytest
-import bleach
 
-
-# ── Import the functions under test ──────────────────────────────────────────
-
-from app.rag.pipeline import (
-    INJECTION_PATTERNS,
-    detect_injection,
-    sanitise_input,
-)
+from app.rag.pipeline import INJECTION_PATTERNS, detect_injection, sanitise_input
 from app.rag.ingestion import chunk_documents
+from app.rag.tools import TOOL_SCHEMAS, _check_order_status, _create_support_ticket
 from app.config import settings
 
 
-# ── Injection detection ───────────────────────────────────────────────────────
+# ── Injection detection ───────────────────────────────────────
 
 class TestInjectionDetection:
 
@@ -68,14 +60,13 @@ class TestInjectionDetection:
         assert detect_injection("hello") is False
 
     def test_partial_word_no_match(self):
-        # "ignore" alone in normal context — check it doesn't false-positive
         assert detect_injection("you can ignore this note") is False
 
     def test_prompt_injection_phrase(self):
         assert detect_injection("this is a prompt injection attack") is True
 
 
-# ── Input sanitisation ────────────────────────────────────────────────────────
+# ── Input sanitisation ────────────────────────────────────────
 
 class TestSanitiseInput:
 
@@ -118,12 +109,11 @@ class TestSanitiseInput:
         assert "30 days" in result
 
 
-# ── Chunk documents ───────────────────────────────────────────────────────────
+# ── Chunk documents ───────────────────────────────────────────
 
 class TestChunkDocuments:
 
     def _make_docs(self, texts: list[str]):
-        """Create minimal LangChain-like document objects."""
         class FakeDoc:
             def __init__(self, content, page=0):
                 self.page_content = content
@@ -140,8 +130,8 @@ class TestChunkDocuments:
         chunks = chunk_documents(docs, "doc-abc", "sample.pdf")
         assert len(chunks) > 0
         chunk = chunks[0]
-        assert "id"       in chunk
-        assert "text"     in chunk
+        assert "id" in chunk
+        assert "text" in chunk
         assert "metadata" in chunk
 
     def test_chunk_id_includes_doc_id(self):
@@ -189,7 +179,133 @@ class TestChunkDocuments:
             assert len(chunk["text"].strip()) > 0
 
 
-# ── Settings / config ─────────────────────────────────────────────────────────
+# ── Tool schemas ──────────────────────────────────────────────
+
+class TestToolSchemas:
+
+    def test_four_tools_defined(self):
+        assert len(TOOL_SCHEMAS) == 4
+
+    def test_tool_names(self):
+        names = {t["function"]["name"] for t in TOOL_SCHEMAS}
+        assert "search_knowledge_base" in names
+        assert "create_support_ticket" in names
+        assert "check_order_status" in names
+        assert "get_faq_answer" in names
+
+    def test_each_tool_has_description(self):
+        for tool in TOOL_SCHEMAS:
+            assert len(tool["function"]["description"]) > 10
+
+    def test_each_tool_has_parameters(self):
+        for tool in TOOL_SCHEMAS:
+            assert "parameters" in tool["function"]
+            assert "properties" in tool["function"]["parameters"]
+
+    def test_search_kb_requires_query(self):
+        schema = next(t for t in TOOL_SCHEMAS if t["function"]["name"] == "search_knowledge_base")
+        assert "query" in schema["function"]["parameters"]["required"]
+
+    def test_create_ticket_required_fields(self):
+        schema = next(t for t in TOOL_SCHEMAS if t["function"]["name"] == "create_support_ticket")
+        required = schema["function"]["parameters"]["required"]
+        assert "subject" in required
+        assert "description" in required
+        assert "priority" in required
+        assert "category" in required
+
+    def test_check_order_requires_order_id(self):
+        schema = next(t for t in TOOL_SCHEMAS if t["function"]["name"] == "check_order_status")
+        assert "order_id" in schema["function"]["parameters"]["required"]
+
+    def test_tool_type_is_function(self):
+        for tool in TOOL_SCHEMAS:
+            assert tool["type"] == "function"
+
+
+# ── Tool execution ────────────────────────────────────────────
+
+class TestToolExecution:
+
+    @pytest.mark.asyncio
+    async def test_create_ticket_returns_ticket_id(self):
+        result = await _create_support_ticket(
+            subject="Cannot log in",
+            description="User reports login page returns 500 error",
+            priority="high",
+            category="technical",
+        )
+        import json
+        data = json.loads(result)
+        assert "ticket_id" in data
+        assert data["ticket_id"].startswith("TKT-")
+        assert data["status"] == "open"
+        assert data["priority"] == "high"
+        assert data["category"] == "technical"
+
+    @pytest.mark.asyncio
+    async def test_create_ticket_subject_truncated(self):
+        import json
+        result = await _create_support_ticket(
+            subject="x" * 200,
+            description="desc",
+            priority="low",
+            category="general",
+        )
+        data = json.loads(result)
+        assert len(data["subject"]) <= 100
+
+    @pytest.mark.asyncio
+    async def test_create_ticket_urgent_sla(self):
+        import json
+        result = await _create_support_ticket(
+            subject="Critical outage",
+            description="System is down",
+            priority="urgent",
+            category="technical",
+        )
+        data = json.loads(result)
+        assert "1 hour" in data["message"]
+
+    @pytest.mark.asyncio
+    async def test_check_order_returns_json(self):
+        import json
+        result = await _check_order_status("ORD-12345")
+        data = json.loads(result)
+        assert "order_id" in data
+        assert data["order_id"] == "ORD-12345"
+        assert "status" in data
+        assert "message" in data
+
+    @pytest.mark.asyncio
+    async def test_check_order_status_valid(self):
+        import json
+        result = await _check_order_status("TEST-999")
+        data = json.loads(result)
+        assert data["status"] in (
+            "processing", "shipped", "delivered", "not_found"
+        )
+
+    @pytest.mark.asyncio
+    async def test_check_order_deterministic(self):
+        """Same order ID always returns same status (hash-based)."""
+        import json
+        r1 = json.loads(await _check_order_status("SAME-ORDER"))
+        r2 = json.loads(await _check_order_status("SAME-ORDER"))
+        assert r1["status"] == r2["status"]
+
+    @pytest.mark.asyncio
+    async def test_different_orders_may_differ(self):
+        import json
+        statuses = set()
+        for i in range(10):
+            r = json.loads(await _check_order_status(f"ORDER-{i}"))
+            statuses.add(r["status"])
+        # With 10 different IDs we should see at least 2 different statuses
+        assert len(statuses) >= 2
+
+
+# ── Settings ──────────────────────────────────────────────────
 
 class TestSettings:
 
@@ -214,3 +330,10 @@ class TestSettings:
 
     def test_pinecone_index_name_set(self):
         assert len(settings.pinecone_index_name) > 0
+
+    def test_agent_max_iterations_positive(self):
+        assert settings.agent_max_iterations > 0
+
+    def test_agent_max_iterations_reasonable(self):
+        # Should be at least 3 to allow search + reasoning + answer
+        assert settings.agent_max_iterations >= 3
