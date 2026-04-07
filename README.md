@@ -1,4 +1,4 @@
-# AI Customer Support Assistant (Agentic)
+# Resolvr AI - AI Customer Support Assistant (Agentic)
 
 A production-grade **agentic AI customer support system** built with FastAPI, OpenAI GPT-4o function calling, Pinecone, LangChain, React, PostgreSQL, and Redis.
 
